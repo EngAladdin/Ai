@@ -1,0 +1,648 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="description" content="نظام ذكي للتنبؤ بالأمراض المحتملة بناءً على الأعراض مع اقتراحات العلاج">
+<title>طبيب — نظام التنبؤ بالأمراض</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+
+<!-- ── Header ─────────────────────────────────────────────────────────── -->
+<header class="header">
+  <div class="header-inner">
+    <div class="logo">
+      <div class="logo-icon">⚕</div>
+      <div class="logo-text">
+        <span class="logo-main">طبيب</span>
+        <span class="logo-sub">نظام التنبؤ بالأمراض</span>
+      </div>
+    </div>
+    <div class="header-actions">
+      {% if model_loaded %}
+      <span class="status-badge status-ml">
+        <span class="status-dot"></span> موديل ML نشط
+      </span>
+      {% else %}
+      <span class="status-badge status-rules">
+        <span class="status-dot"></span> نظام القواعد
+      </span>
+      {% endif %}
+      <button id="dark-toggle" onclick="toggleDark()" title="وضع الليل" aria-label="تبديل الوضع الليلي">
+        <span id="dark-icon">🌙</span>
+      </button>
+    </div>
+  </div>
+</header>
+
+<!-- ── Layout ──────────────────────────────────────────────────────────── -->
+<div class="app-layout">
+
+  <!-- Sidebar -->
+  <aside class="sidebar">
+
+    <!-- Selected symptoms panel -->
+    <div class="panel" id="selected-panel">
+      <div class="panel-head">
+        <span class="panel-title">
+          <span class="panel-icon">✓</span>
+          الأعراض المختارة
+          <span class="count-badge" id="sym-count">0</span>
+        </span>
+        <button class="btn-ghost-sm" onclick="clearAll()">مسح الكل</button>
+      </div>
+      <div id="chips-container" class="chips-container">
+        <div class="empty-chips" id="empty-chips">لم تختر أعراضاً بعد</div>
+      </div>
+      <div id="min-warn" class="inline-warn hidden">اختر عرضين على الأقل</div>
+      <button id="predict-btn" class="btn-predict" onclick="predictDiseases()" disabled>
+        <span class="btn-icon">🔍</span>
+        <span id="btn-text">تحليل الأعراض</span>
+      </button>
+    </div>
+
+    <!-- History -->
+    <div class="panel" id="history-panel">
+      <div class="panel-head">
+        <span class="panel-title">
+          <span class="panel-icon">🕐</span>
+          سجل التحليلات
+        </span>
+        <button class="btn-ghost-sm" onclick="clearHistory()">مسح</button>
+      </div>
+      <div id="history-list"></div>
+      <div id="history-empty" class="empty-chips">لا يوجد سجل بعد</div>
+    </div>
+
+  </aside>
+
+  <!-- Main -->
+  <main class="main-area">
+
+    <!-- Results section -->
+    <section id="results-section" class="results-section hidden">
+      <div class="results-top">
+        <h2 class="results-title">🩺 الأمراض المحتملة</h2>
+        <div class="results-actions">
+          <button class="btn-action" onclick="exportResults()" title="نسخ">
+            <span>📋</span> نسخ
+          </button>
+          <button class="btn-action" onclick="printResults()" title="طباعة">
+            <span>🖨️</span> طباعة
+          </button>
+        </div>
+      </div>
+      <div class="disclaimer-banner">
+        ⚠️ هذا النظام للمساعدة التوعوية فقط وليس بديلاً عن تشخيص وعلاج الطبيب المختص
+      </div>
+      <div id="results-list"></div>
+      <div id="analysis-meta" class="analysis-meta"></div>
+    </section>
+
+    <!-- Search & Filter -->
+    <div class="search-area">
+      <div class="search-box">
+        <span class="search-prefix">🔎</span>
+        <input id="search-input" type="text" autocomplete="off" spellcheck="false"
+               placeholder="ابحث عن عرض بالعربي أو الإنجليزي..."
+               oninput="filterSymptoms()"
+               onkeydown="if(event.key==='Escape')clearSearch()">
+        <button id="search-clear" class="search-clear hidden" onclick="clearSearch()">✕</button>
+      </div>
+      <div class="stats-row">
+        <span class="stat-item" id="stat-total">🔢 <b>173</b> عرض</span>
+        <span class="stat-item" id="stat-filtered"></span>
+      </div>
+    </div>
+
+    <!-- Category tabs -->
+    <div class="cat-tabs" id="cat-tabs">
+      <button class="cat-tab active" onclick="selectCat(null,this)">الكل</button>
+      <button class="cat-tab" data-cat="respiratory"  onclick="selectCat('respiratory',this)">🫁 التنفس</button>
+      <button class="cat-tab" data-cat="fever"        onclick="selectCat('fever',this)">🌡️ حمى</button>
+      <button class="cat-tab" data-cat="skin"         onclick="selectCat('skin',this)">🩹 الجلد</button>
+      <button class="cat-tab" data-cat="digestive"    onclick="selectCat('digestive',this)">🫃 الهضم</button>
+      <button class="cat-tab" data-cat="heart"        onclick="selectCat('heart',this)">❤️ القلب</button>
+      <button class="cat-tab" data-cat="muscles"      onclick="selectCat('muscles',this)">🦴 العضلات</button>
+      <button class="cat-tab" data-cat="neuro"        onclick="selectCat('neuro',this)">🧠 الأعصاب</button>
+      <button class="cat-tab" data-cat="eyes_ears"    onclick="selectCat('eyes_ears',this)">👁️ العيون</button>
+      <button class="cat-tab" data-cat="urinary"      onclick="selectCat('urinary',this)">💧 البولية</button>
+      <button class="cat-tab" data-cat="hormones"     onclick="selectCat('hormones',this)">⚗️ الغدد</button>
+      <button class="cat-tab" data-cat="general"      onclick="selectCat('general',this)">📋 عام</button>
+    </div>
+
+    <!-- Symptom grid -->
+    <div id="symptom-grid" class="symptom-grid"></div>
+    <div id="no-results-msg" class="no-results-msg hidden">لا توجد أعراض مطابقة</div>
+
+  </main>
+</div>
+
+<!-- ── Treatment Modal ─────────────────────────────────────────────────── -->
+<div id="modal-overlay" class="modal-overlay hidden" onclick="closeModal(event)">
+  <div class="modal" id="treatment-modal" role="dialog" aria-modal="true">
+    <button class="modal-close" onclick="closeTreatmentModal()">✕</button>
+    <div id="modal-content"></div>
+  </div>
+</div>
+
+<!-- ── Print area ──────────────────────────────────────────────────────── -->
+<div id="print-area" class="print-only"></div>
+
+<!-- ── Toast ──────────────────────────────────────────────────────────── -->
+<div id="toast" class="toast hidden"></div>
+
+<script>
+// ── Data ──────────────────────────────────────────────────────────────────
+const SYMPTOMS = {{ symptoms | tojson }};
+
+const CATS = {
+  respiratory: ['cough','dry_cough','breathlessness','wheezing','chest_tightness','runny_nose','congestion','blood_in_sputum','phlegm','throat_irritation','sinus_pressure','continuous_sneezing','mucoid_sputum','rusty_sputum','patches_in_throat'],
+  fever:       ['high_fever','mild_fever','chills','sweating','night_sweats','body_aches','fatigue','shivering','recurrent_infections','toxic_look_typhos','malaise','sunken_eyes','dehydration'],
+  skin:        ['itching','skin_rash','blister','skin_lesions','rash_on_palms','pus_filled_pimples','blackheads','skin_peeling','eczema_patches','intense_itching_night','red_spots_over_body','nodal_skin_eruptions','internal_itching','dischromic_patches','scurring','silver_like_dusting','small_dents_in_nails','inflammatory_nails','red_sore_around_nose','yellow_crust_ooze','bruising','easy_bruising','burrow_marks','dry_skin','pale_skin'],
+  digestive:   ['nausea','vomiting','diarrhoea','constipation','abdominal_pain','stomach_pain','heartburn','indigestion','loss_of_appetite','difficulty_swallowing','belly_pain','passage_of_gases','acidity','ulcers_on_tongue','stomach_bleeding','distention_of_abdomen','swelling_of_stomach','yellowish_skin','fluid_overload','acute_liver_failure','pain_during_bowel_movements','pain_in_anal_region','bloody_stool','irritation_in_anus','regurgitation','increased_appetite','history_of_alcohol_consumption'],
+  heart:       ['chest_pain','palpitations','fast_heart_rate','swollen_legs','swollen_blood_vessels','prominent_veins_on_calf','obesity','cramps'],
+  muscles:     ['joint_pain','muscle_pain','knee_pain','hip_joint_pain','muscle_weakness','stiff_neck','swelling_joints','stiff_joints_morning','bone_pain','back_pain','neck_pain','movement_stiffness','muscle_wasting','painful_walking','weakness_in_limbs','swollen_extremeties','cold_hands_and_feets','drying_and_tingling_lips'],
+  neuro:       ['headache','dizziness','loss_of_balance','confusion','memory_problems','sensitivity_to_light','depression','anxiety','irritability','spinning_movements','unsteadiness','weakness_of_one_body_side','slurred_speech','altered_sensorium','restlessness','lethargy','mood_swings','lack_of_concentration','coma','loss_of_smell','loss_of_taste','blurred_and_distorted_vision','visual_disturbances'],
+  eyes_ears:   ['redness_of_eyes','eye_discharge','eye_inflammation','yellowing_of_eyes','red_eye','ear_pain','hearing_loss','ear_discharge','watering_from_eyes','pain_behind_the_eyes'],
+  urinary:     ['polyuria','blood_in_urine','dark_urine','excessive_thirst','burning_micturition','bladder_discomfort','foul_smell_of_urine','continuous_feel_of_urine','yellow_urine','spotting_urination','flank_pain','pain_radiating_to_groin'],
+  hormones:    ['weight_gain','weight_loss','unexplained_weight_loss','hair_loss','cold_intolerance','enlarged_thyroid','brittle_nails','excessive_hunger','irregular_sugar_level','puffy_face_and_eyes','swelled_lymph_nodes','enlarged_spleen','painless_lumps','abnormal_menstruation','tingling_hands','slow_healing_wounds'],
+  general:     ['family_history','extra_marital_contacts','receiving_blood_transfusion','receiving_unsterile_injections','mouth_ulcers','swollen_face'],
+};
+
+const SEVERITY = {
+  high:   ['Heart attack','Meningitis','AIDS','Leukemia','Lymphoma','Tuberculosis','Paralysis (brain hemorrhage)','Pneumonia','COVID-19','Monkeypox'],
+  medium: ['Malaria','Dengue','Typhoid','Diabetes','Diabetes Type 2','Hepatitis A','Hepatitis B','Hepatitis C','Hepatitis D','Hepatitis E','Kidney Stones','Alcoholic hepatitis','Meningitis'],
+};
+function getSev(d) {
+  if (SEVERITY.high.includes(d))   return { label:'خطير',   cls:'sev-high',   dot:'🔴' };
+  if (SEVERITY.medium.includes(d)) return { label:'متوسط',  cls:'sev-medium', dot:'🟡' };
+  return { label:'خفيف', cls:'sev-low', dot:'🟢' };
+}
+
+// ── State ─────────────────────────────────────────────────────────────────
+let selected = new Set();
+let activeCat = null;
+let searchQ = '';
+let lastResults = [];
+let lastSymList = [];
+let history = JSON.parse(localStorage.getItem('med_history') || '[]');
+
+// ── Dark mode ─────────────────────────────────────────────────────────────
+function initDark() {
+  if (localStorage.getItem('dark') === '1') {
+    document.body.classList.add('dark');
+    document.getElementById('dark-icon').textContent = '☀️';
+  }
+}
+function toggleDark() {
+  const isDark = document.body.classList.toggle('dark');
+  localStorage.setItem('dark', isDark ? '1' : '0');
+  document.getElementById('dark-icon').textContent = isDark ? '☀️' : '🌙';
+}
+
+// ── Grid ──────────────────────────────────────────────────────────────────
+function renderGrid() {
+  const grid  = document.getElementById('symptom-grid');
+  const noMsg = document.getElementById('no-results-msg');
+  const q = searchQ.toLowerCase();
+
+  const filtered = SYMPTOMS.filter(s => {
+    const matchQ   = !q || s.ar.includes(q) || s.en.toLowerCase().includes(q);
+    const matchCat = !activeCat || (CATS[activeCat] || []).includes(s.en);
+    return matchQ && matchCat;
+  });
+
+  document.getElementById('stat-filtered').textContent =
+    (q || activeCat) ? `🔍 ${filtered.length} نتيجة` : '';
+
+  noMsg.classList.toggle('hidden', filtered.length > 0);
+
+  grid.innerHTML = filtered.map(s => {
+    const sel = selected.has(s.en);
+    const safeAr = s.ar.replace(/\\/g,'\\\\').replace(/'/g,"\\'");
+    return `<button class="sym-card${sel?' sel':''}" onclick="toggle('${s.en}','${safeAr}')" title="${s.en.replace(/_/g,' ')}">
+      ${sel ? '<span class="tick">✓</span>' : ''}
+      <span class="sym-ar">${s.ar}</span>
+      <span class="sym-en">${s.en.replace(/_/g,' ')}</span>
+    </button>`;
+  }).join('');
+}
+
+function toggle(en, _ar) {
+  selected.has(en) ? selected.delete(en) : selected.add(en);
+  updatePanel();
+  renderGrid();
+  document.getElementById('results-section').classList.add('hidden');
+}
+
+function updatePanel() {
+  const count = selected.size;
+  document.getElementById('sym-count').textContent = count;
+  document.getElementById('empty-chips').style.display = count ? 'none' : 'block';
+  document.getElementById('min-warn').classList.toggle('hidden', count === 0 || count >= 2);
+  document.getElementById('predict-btn').disabled = count < 2;
+
+  const syms = SYMPTOMS.filter(s => selected.has(s.en));
+  const chips = document.getElementById('chips-container');
+  const existing = chips.querySelectorAll('.chip');
+  existing.forEach(c => c.remove());
+  syms.forEach(s => {
+    const chip = document.createElement('span');
+    chip.className = 'chip';
+    chip.innerHTML = `${s.ar}<button class="chip-del" onclick="toggle('${s.en}','')">✕</button>`;
+    chips.appendChild(chip);
+  });
+}
+
+function clearAll() {
+  selected.clear();
+  updatePanel();
+  renderGrid();
+  document.getElementById('results-section').classList.add('hidden');
+}
+
+// ── Search & filter ──────────────────────────────────────────────────────
+function filterSymptoms() {
+  searchQ = document.getElementById('search-input').value;
+  document.getElementById('search-clear').classList.toggle('hidden', !searchQ);
+  activeCat = null;
+  document.querySelectorAll('.cat-tab').forEach(b => b.classList.remove('active'));
+  document.querySelector('.cat-tab').classList.add('active');
+  renderGrid();
+}
+function clearSearch() {
+  document.getElementById('search-input').value = '';
+  searchQ = '';
+  document.getElementById('search-clear').classList.add('hidden');
+  renderGrid();
+}
+function selectCat(cat, btn) {
+  activeCat = cat;
+  searchQ = '';
+  document.getElementById('search-input').value = '';
+  document.getElementById('search-clear').classList.add('hidden');
+  document.querySelectorAll('.cat-tab').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  renderGrid();
+}
+
+// ── Predict ───────────────────────────────────────────────────────────────
+async function predictDiseases() {
+  if (selected.size < 2) return;
+  const btn = document.getElementById('predict-btn');
+  document.getElementById('btn-text').textContent = 'جاري التحليل...';
+  btn.classList.add('loading');
+  btn.disabled = true;
+  showSkeleton();
+
+  try {
+    const t0  = Date.now();
+    const res = await fetch('/predict', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ symptoms: [...selected] })
+    });
+    const data    = await res.json();
+    const elapsed = Date.now() - t0;
+
+    if (res.ok) {
+      lastResults  = data.results;
+      lastSymList  = [...selected];
+      renderResults(data.results, data.model_used, elapsed);
+      saveHistory(data.results, [...selected], data.model_used);
+    } else {
+      hideSkeleton();
+      showToast('❌ ' + (data.error || 'حدث خطأ'), 'error');
+    }
+  } catch(e) {
+    hideSkeleton();
+    showToast('❌ فشل الاتصال بالخادم', 'error');
+  }
+
+  document.getElementById('btn-text').textContent = 'تحليل الأعراض';
+  btn.classList.remove('loading');
+  btn.disabled = selected.size < 2;
+}
+
+function showSkeleton() {
+  const sec  = document.getElementById('results-section');
+  const list = document.getElementById('results-list');
+  sec.classList.remove('hidden');
+  list.innerHTML = [1,2,3].map(() => `
+    <div class="skel-card">
+      <div class="skel skel-h"></div>
+      <div class="skel skel-bar"></div>
+      <div class="skel skel-sm"></div>
+    </div>`).join('');
+  document.getElementById('analysis-meta').innerHTML = '';
+  sec.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+function hideSkeleton() {
+  document.getElementById('results-section').classList.add('hidden');
+}
+
+function renderResults(results, modelUsed, elapsed) {
+  const sec  = document.getElementById('results-section');
+  const list = document.getElementById('results-list');
+  const meta = document.getElementById('analysis-meta');
+  sec.classList.remove('hidden');
+
+  if (!results || results.length === 0) {
+    list.innerHTML = '<div class="empty-results">لا توجد نتائج لهذه الأعراض</div>';
+    meta.innerHTML = '';
+    sec.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    return;
+  }
+
+  const maxP = results[0].probability;
+  list.innerHTML = results.map((r, i) => {
+    const sev  = getSev(r.disease_en);
+    const pct  = maxP > 0 ? Math.round((r.probability / maxP) * 100) : 0;
+    const top  = i === 0;
+    const tr   = r.treatment || {};
+    const icon = tr.icon || '🏥';
+    return `
+    <div class="result-card${top ? ' top' : ''}" style="animation-delay:${i*80}ms">
+      <div class="result-main">
+        <div class="result-left">
+          <div class="disease-icon">${icon}</div>
+          <div class="disease-info">
+            <div class="disease-ar">
+              ${top ? '<span class="top-badge">الأعلى احتمالاً</span>' : `<span class="rank">#${i+1}</span>`}
+              ${r.disease_ar}
+            </div>
+            <div class="disease-en">${r.disease_en}</div>
+          </div>
+        </div>
+        <div class="result-right">
+          <span class="sev-tag ${sev.cls}">${sev.dot} ${sev.label}</span>
+          <span class="prob-num">${r.probability}%</span>
+        </div>
+      </div>
+      <div class="progress-wrap">
+        <div class="progress-track">
+          <div class="progress-fill${top?' top-fill':''}" style="width:0%" data-w="${pct}%"></div>
+        </div>
+      </div>
+      ${tr.description ? `<div class="disease-desc">${tr.description}</div>` : ''}
+      <button class="btn-treatment" onclick='showTreatment(${JSON.stringify(r)})'>
+        💊 عرض خطة العلاج الكاملة
+      </button>
+    </div>`;
+  }).join('');
+
+  // Animate progress bars
+  requestAnimationFrame(() => {
+    document.querySelectorAll('.progress-fill[data-w]').forEach(el => {
+      setTimeout(() => { el.style.width = el.dataset.w; }, 50);
+    });
+  });
+
+  const now = new Date().toLocaleString('ar-EG');
+  meta.innerHTML = `
+    <div class="meta-grid">
+      <span>🧮 الأعراض: <b>${lastSymList.length}</b></span>
+      <span>⚡ وقت التحليل: <b>${elapsed}ms</b></span>
+      <span>🔧 النظام: <b>${modelUsed ? 'موديل ML' : 'نظام القواعد'}</b></span>
+      <span>🕐 <b>${now}</b></span>
+    </div>`;
+
+  sec.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+// ── Treatment modal ───────────────────────────────────────────────────────
+function showTreatment(result) {
+  const tr   = result.treatment || {};
+  const icon = tr.icon || '🏥';
+  const sev  = getSev(result.disease_en);
+
+  const meds = (tr.medications || []).map(m =>
+    `<li class="treatment-item"><span class="item-dot">💊</span>${m}</li>`
+  ).join('');
+  const life = (tr.lifestyle || []).map(l =>
+    `<li class="treatment-item"><span class="item-dot">✅</span>${l}</li>`
+  ).join('');
+
+  const urgency = tr.when_to_see_doctor || '';
+  const urgencyClass = urgency.startsWith('🚨') ? 'urgent-red' : (urgency.startsWith('فوراً') || urgency.startsWith('فوراً') ? 'urgent-orange' : 'urgent-blue');
+
+  document.getElementById('modal-content').innerHTML = `
+    <div class="modal-header">
+      <div class="modal-icon">${icon}</div>
+      <div class="modal-title-wrap">
+        <h2 class="modal-title">${result.disease_ar}</h2>
+        <span class="modal-en">${result.disease_en}</span>
+      </div>
+      <span class="sev-tag ${sev.cls} modal-sev">${sev.dot} ${sev.label}</span>
+    </div>
+
+    ${tr.description ? `<p class="modal-desc">${tr.description}</p>` : ''}
+
+    <div class="treatment-prob">
+      <span>احتمالية التطابق</span>
+      <div class="treatment-prob-bar">
+        <div class="treatment-prob-fill" style="width:${result.probability}%"></div>
+      </div>
+      <b>${result.probability}%</b>
+    </div>
+
+    <div class="treatment-sections">
+      ${meds ? `
+      <div class="treatment-section">
+        <h3 class="section-head"><span>💊</span> الأدوية والعلاجات</h3>
+        <ul class="treatment-list">${meds}</ul>
+      </div>` : ''}
+
+      ${life ? `
+      <div class="treatment-section">
+        <h3 class="section-head"><span>🌿</span> نمط الحياة والوقاية</h3>
+        <ul class="treatment-list">${life}</ul>
+      </div>` : ''}
+
+      ${urgency ? `
+      <div class="urgency-box ${urgencyClass}">
+        <span class="urgency-title">⏰ متى تزور الطبيب؟</span>
+        <span class="urgency-text">${urgency}</span>
+      </div>` : ''}
+    </div>
+
+    <div class="modal-footer-note">
+      ⚠️ هذه المعلومات للتوعية الصحية فقط — لا تستبدل الاستشارة الطبية المتخصصة
+    </div>
+  `;
+
+  document.getElementById('modal-overlay').classList.remove('hidden');
+  document.body.style.overflow = 'hidden';
+
+  // Animate prob bar
+  requestAnimationFrame(() => {
+    setTimeout(() => {
+      const fill = document.querySelector('.treatment-prob-fill');
+      if (fill) fill.style.width = result.probability + '%';
+    }, 100);
+  });
+}
+
+function closeModal(e) {
+  if (e.target === document.getElementById('modal-overlay')) closeTreatmentModal();
+}
+function closeTreatmentModal() {
+  document.getElementById('modal-overlay').classList.add('hidden');
+  document.body.style.overflow = '';
+}
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeTreatmentModal(); });
+
+// ── History ───────────────────────────────────────────────────────────────
+function saveHistory(results, symList, modelUsed) {
+  if (!results || results.length === 0) return;
+  history.unshift({
+    id:        Date.now(),
+    time:      new Date().toLocaleString('ar-EG'),
+    symptoms:  symList,
+    results:   results,
+    modelUsed: modelUsed
+  });
+  if (history.length > 10) history = history.slice(0, 10);
+  localStorage.setItem('med_history', JSON.stringify(history));
+  renderHistory();
+}
+
+function renderHistory() {
+  const list  = document.getElementById('history-list');
+  const empty = document.getElementById('history-empty');
+
+  if (history.length === 0) {
+    list.innerHTML = '';
+    empty.style.display = 'block';
+    return;
+  }
+  empty.style.display = 'none';
+
+  list.innerHTML = history.map((entry, idx) => {
+    const top    = entry.results[0];
+    const sev    = getSev(top.disease_en);
+    const tr     = top.treatment || {};
+    const sympAr = entry.symptoms.map(en => {
+      const s = SYMPTOMS.find(x => x.en === en);
+      return s ? s.ar : en;
+    }).slice(0, 3).join('، ') + (entry.symptoms.length > 3 ? ` +${entry.symptoms.length - 3}` : '');
+
+    return `
+    <div class="history-card" onclick="restoreHistory(${idx})">
+      <div class="history-top">
+        <span class="his-icon">${tr.icon || '🏥'}</span>
+        <span class="his-disease">${top.disease_ar}</span>
+        <span class="sev-dot-only ${sev.cls}" title="${sev.label}"></span>
+        <span class="his-prob">${top.probability}%</span>
+      </div>
+      <div class="his-syms">${sympAr}</div>
+      <div class="his-time">${entry.time}</div>
+    </div>`;
+  }).join('');
+}
+
+function restoreHistory(idx) {
+  const entry = history[idx];
+  if (!entry) return;
+  selected = new Set(entry.symptoms);
+  updatePanel();
+  renderGrid();
+  lastResults  = entry.results;
+  lastSymList  = entry.symptoms;
+  renderResults(entry.results, entry.modelUsed, 0);
+  const metaRow = document.querySelector('#analysis-meta .meta-grid');
+  if (metaRow) {
+    const spans = metaRow.querySelectorAll('span');
+    if (spans.length > 0) spans[spans.length - 1].innerHTML = `🕐 <b>${entry.time} (مستعاد)</b>`;
+  }
+  showToast('✅ تم استعادة التحليل', 'success');
+}
+
+function clearHistory() {
+  history = [];
+  localStorage.removeItem('med_history');
+  renderHistory();
+  showToast('🗑️ تم مسح السجل', 'info');
+}
+
+// ── Export / Print ────────────────────────────────────────────────────────
+function exportResults() {
+  if (!lastResults.length) return;
+  const sympAr = lastSymList.map(en => {
+    const s = SYMPTOMS.find(x => x.en === en);
+    return s ? s.ar : en;
+  });
+  const lines = [
+    '🏥 نتائج تحليل الأعراض — نظام طبيب',
+    '═'.repeat(36),
+    `الأعراض (${sympAr.length}): ${sympAr.join('، ')}`,
+    '',
+    '🩺 الأمراض المحتملة:',
+    ...lastResults.map((r, i) => {
+      const tr = r.treatment || {};
+      let txt = `${i+1}. ${r.disease_ar} (${r.disease_en}) — ${r.probability}%`;
+      if (tr.medications?.length) txt += `\n   💊 ${tr.medications.slice(0,2).join(' | ')}`;
+      return txt;
+    }),
+    '',
+    '⚠️ للمساعدة التوعوية فقط — استشر الطبيب المختص.',
+    `🕐 ${new Date().toLocaleString('ar-EG')}`
+  ];
+  navigator.clipboard.writeText(lines.join('\n'))
+    .then(() => showToast('✅ تم نسخ النتائج!', 'success'))
+    .catch(() => showToast('❌ فشل النسخ', 'error'));
+}
+
+function printResults() {
+  if (!lastResults.length) return;
+  const sympAr = lastSymList.map(en => {
+    const s = SYMPTOMS.find(x => x.en === en);
+    return s ? s.ar : en;
+  });
+  document.getElementById('print-area').innerHTML = `
+    <div class="print-header">
+      <h1>⚕ نظام طبيب للتنبؤ بالأمراض</h1>
+      <p>${new Date().toLocaleString('ar-EG')}</p>
+    </div>
+    <h3>الأعراض المختارة (${sympAr.length}):</h3>
+    <p class="print-syms">${sympAr.join(' • ')}</p>
+    <h3>الأمراض المحتملة والعلاج:</h3>
+    ${lastResults.map((r,i) => {
+      const tr  = r.treatment || {};
+      const sev = getSev(r.disease_en);
+      const meds = (tr.medications || []).slice(0,3).join('، ');
+      return `
+      <div class="print-result${i===0?' print-top':''}">
+        <div class="print-rh">
+          <span>${i+1}. ${tr.icon || ''} ${r.disease_ar} — ${r.disease_en}</span>
+          <span>${sev.dot} ${sev.label} | ${r.probability}%</span>
+        </div>
+        ${tr.description ? `<p class="print-desc">${tr.description}</p>` : ''}
+        ${meds ? `<p class="print-meds">💊 ${meds}</p>` : ''}
+      </div>`;
+    }).join('')}
+    <p class="print-disc">⚠️ هذا النظام للتوعية الصحية فقط وليس بديلاً عن تشخيص الطبيب المختص</p>`;
+  window.print();
+}
+
+// ── Toast ─────────────────────────────────────────────────────────────────
+function showToast(msg, type = 'success') {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = `toast toast-${type}`;
+  clearTimeout(t._t);
+  t._t = setTimeout(() => t.className = 'toast hidden', 3200);
+}
+
+// ── Init ──────────────────────────────────────────────────────────────────
+initDark();
+renderGrid();
+renderHistory();
+updatePanel();
+</script>
+</body>
+</html>
